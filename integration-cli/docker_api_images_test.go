@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/go-check/check"
 )
 
@@ -18,7 +18,7 @@ func (s *DockerSuite) TestAPIImagesFilter(c *check.C) {
 	for _, n := range []string{name, name2, name3} {
 		dockerCmd(c, "tag", "busybox", n)
 	}
-	type image types.Image
+	type image types.ImageSummary
 	getImages := func(filter string) []image {
 		v := url.Values{}
 		v.Set("filter", filter)

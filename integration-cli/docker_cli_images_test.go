@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/go-check/check"
 )
@@ -333,9 +333,7 @@ func (s *DockerSuite) TestImagesFormat(c *check.C) {
 
 	expected := []string{"myimage", "myimage"}
 	var names []string
-	for _, l := range lines {
-		names = append(names, l)
-	}
+	names = append(names, lines...)
 	c.Assert(expected, checker.DeepEquals, names, check.Commentf("Expected array with truncated names: %v, got: %v", expected, names))
 }
 

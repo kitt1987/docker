@@ -13,7 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/versions"
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
 	"github.com/go-check/check"
 )
 
@@ -162,7 +162,8 @@ func (s *DockerSuite) TestAPIStatsNetworkStats(c *check.C) {
 }
 
 func (s *DockerSuite) TestAPIStatsNetworkStatsVersioning(c *check.C) {
-	testRequires(c, SameHostDaemon)
+	// Windows doesn't support API versions less than 1.25, so no point testing 1.17 .. 1.21
+	testRequires(c, SameHostDaemon, DaemonIsLinux)
 
 	out, _ := runSleepingContainer(c)
 	id := strings.TrimSpace(out)
@@ -171,7 +172,7 @@ func (s *DockerSuite) TestAPIStatsNetworkStatsVersioning(c *check.C) {
 
 	for i := 17; i <= 21; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
 			apiVersion := fmt.Sprintf("v1.%d", i)
 			statsJSONBlob := getVersionedStats(c, id, apiVersion)
@@ -182,7 +183,7 @@ func (s *DockerSuite) TestAPIStatsNetworkStatsVersioning(c *check.C) {
 				c.Assert(jsonBlobHasGTE121NetworkStats(statsJSONBlob), checker.Equals, true,
 					check.Commentf("Stats JSON blob from API %s %#v does not look like a >=v1.21 API stats structure", apiVersion, statsJSONBlob))
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 }
@@ -302,7 +303,7 @@ func (s *DockerSuite) TestAPIStatsNoStreamConnectedContainers(c *check.C) {
 
 	select {
 	case err := <-ch:
-		c.Assert(err, checker.IsNil, check.Commentf("Error in stats remote API: %v", err))
+		c.Assert(err, checker.IsNil, check.Commentf("Error in stats Engine API: %v", err))
 	case <-time.After(15 * time.Second):
 		c.Fatalf("Stats did not return after timeout")
 	}
