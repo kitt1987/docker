@@ -15,13 +15,14 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/daemon/logger/loggerutils"
 	"github.com/docker/docker/pkg/urlutil"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -39,6 +40,7 @@ const (
 	splunkGzipCompressionKey      = "splunk-gzip"
 	splunkGzipCompressionLevelKey = "splunk-gzip-level"
 	envKey                        = "env"
+	envRegexKey                   = "env-regex"
 	labelsKey                     = "labels"
 	tagKey                        = "tag"
 )
@@ -202,7 +204,7 @@ func New(info logger.Info) (logger.Logger, error) {
 		}
 		gzipCompressionLevel = int(gzipCompressionLevel64)
 		if gzipCompressionLevel < gzip.DefaultCompression || gzipCompressionLevel > gzip.BestCompression {
-			err := fmt.Errorf("Not supported level '%s' for %s (supported values between %d and %d).",
+			err := fmt.Errorf("not supported level '%s' for %s (supported values between %d and %d)",
 				gzipCompressionLevelStr, splunkGzipCompressionLevelKey, gzip.DefaultCompression, gzip.BestCompression)
 			return nil, err
 		}
@@ -235,7 +237,10 @@ func New(info logger.Info) (logger.Logger, error) {
 		}
 	}
 
-	attrs := info.ExtraAttributes(nil)
+	attrs, err := info.ExtraAttributes(nil)
+	if err != nil {
+		return nil, err
+	}
 
 	var (
 		postMessagesFrequency = getAdvancedOptionDuration(envVarPostMessagesFrequency, defaultPostMessagesFrequency)
@@ -336,7 +341,7 @@ func (l *splunkLoggerInline) Log(msg *logger.Message) error {
 	event.Source = msg.Source
 
 	message.Event = &event
-
+	logger.PutMessage(msg)
 	return l.queueMessageAsync(message)
 }
 
@@ -354,15 +359,20 @@ func (l *splunkLoggerJSON) Log(msg *logger.Message) error {
 	event.Source = msg.Source
 
 	message.Event = &event
-
+	logger.PutMessage(msg)
 	return l.queueMessageAsync(message)
 }
 
 func (l *splunkLoggerRaw) Log(msg *logger.Message) error {
+	// empty or whitespace-only messages are not accepted by HEC
+	if strings.TrimSpace(string(msg.Line)) == "" {
+		return nil
+	}
+
 	message := l.createSplunkMessage(msg)
 
 	message.Event = string(append(l.prefix, msg.Line...))
-
+	logger.PutMessage(msg)
 	return l.queueMessageAsync(message)
 }
 
@@ -538,6 +548,7 @@ func ValidateLogOpt(cfg map[string]string) error {
 		case splunkGzipCompressionKey:
 		case splunkGzipCompressionLevelKey:
 		case envKey:
+		case envRegexKey:
 		case labelsKey:
 		case tagKey:
 		default:

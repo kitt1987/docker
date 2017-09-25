@@ -27,8 +27,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/go-connections/tlsconfig"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -76,12 +76,6 @@ type Plugin struct {
 	activateErr error
 	// keeps track of callback handlers run against this plugin
 	handlersRun bool
-}
-
-// BasePath returns the path to which all paths returned by the plugin are relative to.
-// For v1 plugins, this always returns the host's root directory.
-func (p *Plugin) BasePath() string {
-	return "/"
 }
 
 // Name returns the name of the plugin.
@@ -175,7 +169,7 @@ func (p *Plugin) activateWithLock() error {
 
 func (p *Plugin) waitActive() error {
 	p.activateWait.L.Lock()
-	for !p.activated() {
+	for !p.activated() && p.activateErr == nil {
 		p.activateWait.Wait()
 	}
 	p.activateWait.L.Unlock()
@@ -221,6 +215,10 @@ func loadWithRetry(name string, retry bool) (*Plugin, error) {
 		}
 
 		storage.Lock()
+		if pl, exists := storage.plugins[name]; exists {
+			storage.Unlock()
+			return pl, pl.activate()
+		}
 		storage.plugins[name] = pl
 		storage.Unlock()
 
@@ -298,7 +296,10 @@ func GetAll(imp string) ([]*Plugin, error) {
 	chPl := make(chan *plLoad, len(pluginNames))
 	var wg sync.WaitGroup
 	for _, name := range pluginNames {
-		if pl, ok := storage.plugins[name]; ok {
+		storage.Lock()
+		pl, ok := storage.plugins[name]
+		storage.Unlock()
+		if ok {
 			chPl <- &plLoad{pl, nil}
 			continue
 		}

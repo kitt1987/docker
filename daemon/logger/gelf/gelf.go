@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/Graylog2/go-gelf/gelf"
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/daemon/logger/loggerutils"
 	"github.com/docker/docker/pkg/urlutil"
+	"github.com/sirupsen/logrus"
 )
 
 const name = "gelf"
@@ -69,12 +69,17 @@ func New(info logger.Info) (logger.Logger, error) {
 		"_created":        info.ContainerCreated,
 	}
 
-	extraAttrs := info.ExtraAttributes(func(key string) string {
+	extraAttrs, err := info.ExtraAttributes(func(key string) string {
 		if key[0] == '_' {
 			return key
 		}
 		return "_" + key
 	})
+
+	if err != nil {
+		return nil, err
+	}
+
 	for k, v := range extraAttrs {
 		extra[k] = v
 	}
@@ -133,6 +138,7 @@ func (s *gelfLogger) Log(msg *logger.Message) error {
 		Level:    level,
 		RawExtra: s.rawExtra,
 	}
+	logger.PutMessage(msg)
 
 	if err := s.writer.WriteMessage(&m); err != nil {
 		return fmt.Errorf("gelf: cannot send GELF message: %v", err)
@@ -156,6 +162,7 @@ func ValidateLogOpt(cfg map[string]string) error {
 		case "tag":
 		case "labels":
 		case "env":
+		case "env-regex":
 		case "gelf-compression-level":
 			i, err := strconv.Atoi(val)
 			if err != nil || i < flate.DefaultCompression || i > flate.BestCompression {

@@ -6,13 +6,13 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/bitseq"
 	"github.com/docker/libnetwork/datastore"
 	"github.com/docker/libnetwork/discoverapi"
 	"github.com/docker/libnetwork/ipamapi"
 	"github.com/docker/libnetwork/ipamutils"
 	"github.com/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -448,7 +448,7 @@ func (a *Allocator) RequestAddress(poolID string, prefAddress net.IP, opts map[s
 	c := p
 	for c.Range != nil {
 		k = c.ParentKey
-		c, ok = aSpace.subnets[k]
+		c = aSpace.subnets[k]
 	}
 	aSpace.Unlock()
 
@@ -579,7 +579,7 @@ func (a *Allocator) DumpDatabase() string {
 		s = fmt.Sprintf("\n\n%s Config", as)
 		aSpace.Lock()
 		for k, config := range aSpace.subnets {
-			s = fmt.Sprintf("%s%s", s, fmt.Sprintf("\n%v: %v", k, config))
+			s += fmt.Sprintf("\n%v: %v", k, config)
 			if config.Range == nil {
 				a.retrieveBitmask(k, config.Pool)
 			}
@@ -589,7 +589,7 @@ func (a *Allocator) DumpDatabase() string {
 
 	s = fmt.Sprintf("%s\n\nBitmasks", s)
 	for k, bm := range a.addresses {
-		s = fmt.Sprintf("%s%s", s, fmt.Sprintf("\n%s: %s", k, bm))
+		s += fmt.Sprintf("\n%s: %s", k, bm)
 	}
 
 	return s

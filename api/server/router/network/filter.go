@@ -1,14 +1,13 @@
 package network
 
 import (
-	"fmt"
-
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/runconfig"
 )
 
-func filterNetworkByType(nws []types.NetworkResource, netType string) (retNws []types.NetworkResource, err error) {
+func filterNetworkByType(nws []types.NetworkResource, netType string) ([]types.NetworkResource, error) {
+	retNws := []types.NetworkResource{}
 	switch netType {
 	case "builtin":
 		for _, nw := range nws {
@@ -23,10 +22,18 @@ func filterNetworkByType(nws []types.NetworkResource, netType string) (retNws []
 			}
 		}
 	default:
-		return nil, fmt.Errorf("Invalid filter: 'type'='%s'", netType)
+		return nil, invalidFilter(netType)
 	}
 	return retNws, nil
 }
+
+type invalidFilter string
+
+func (e invalidFilter) Error() string {
+	return "Invalid filter: 'type'='" + string(e) + "'"
+}
+
+func (e invalidFilter) InvalidParameter() {}
 
 // filterNetworks filters network list according to user specified filter
 // and returns user chosen networks
@@ -58,11 +65,16 @@ func filterNetworks(nws []types.NetworkResource, filter filters.Args) ([]types.N
 				continue
 			}
 		}
+		if filter.Include("scope") {
+			if !filter.ExactMatch("scope", nw.Scope) {
+				continue
+			}
+		}
 		displayNet = append(displayNet, nw)
 	}
 
 	if filter.Include("type") {
-		var typeNet []types.NetworkResource
+		typeNet := []types.NetworkResource{}
 		errFilter := filter.WalkValues("type", func(fval string) error {
 			passList, err := filterNetworkByType(displayNet, fval)
 			if err != nil {

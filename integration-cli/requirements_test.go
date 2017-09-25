@@ -1,56 +1,67 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/integration-cli/requirement"
-	"github.com/go-check/check"
 )
-
-func PlatformIs(platform string) bool {
-	return daemonPlatform == platform
-}
-
-func ArchitectureIs(arch string) bool {
-	return os.Getenv("DOCKER_ENGINE_GOARCH") == arch
-}
 
 func ArchitectureIsNot(arch string) bool {
 	return os.Getenv("DOCKER_ENGINE_GOARCH") != arch
 }
 
-func StorageDriverIs(storageDriver string) bool {
-	return strings.HasPrefix(daemonStorageDriver, storageDriver)
-}
-
-func StorageDriverIsNot(storageDriver string) bool {
-	return !strings.HasPrefix(daemonStorageDriver, storageDriver)
-}
-
 func DaemonIsWindows() bool {
-	return PlatformIs("windows")
+	return testEnv.OSType == "windows"
+}
+
+func DaemonIsWindowsAtLeastBuild(buildNumber int) func() bool {
+	return func() bool {
+		if testEnv.OSType != "windows" {
+			return false
+		}
+		version := testEnv.DaemonInfo.KernelVersion
+		numVersion, _ := strconv.Atoi(strings.Split(version, " ")[1])
+		return numVersion >= buildNumber
+	}
 }
 
 func DaemonIsLinux() bool {
-	return PlatformIs("linux")
+	return testEnv.OSType == "linux"
 }
 
+func OnlyDefaultNetworks() bool {
+	cli, err := client.NewEnvClient()
+	if err != nil {
+		return false
+	}
+	networks, err := cli.NetworkList(context.TODO(), types.NetworkListOptions{})
+	if err != nil || len(networks) > 0 {
+		return false
+	}
+	return true
+}
+
+// Deprecated: use skip.IfCondition(t, !testEnv.DaemonInfo.ExperimentalBuild)
 func ExperimentalDaemon() bool {
-	return experimentalDaemon
+	return testEnv.DaemonInfo.ExperimentalBuild
 }
 
 func NotExperimentalDaemon() bool {
-	return !experimentalDaemon
+	return !testEnv.DaemonInfo.ExperimentalBuild
 }
 
 func IsAmd64() bool {
-	return ArchitectureIs("amd64")
+	return os.Getenv("DOCKER_ENGINE_GOARCH") == "amd64"
 }
 
 func NotArm() bool {
@@ -70,7 +81,7 @@ func NotS390X() bool {
 }
 
 func SameHostDaemon() bool {
-	return isLocalDaemon
+	return testEnv.IsLocalDaemon()
 }
 
 func UnixCli() bool {
@@ -121,12 +132,8 @@ func NotaryServerHosting() bool {
 	return err == nil
 }
 
-func NotOverlay() bool {
-	return StorageDriverIsNot("overlay")
-}
-
 func Devicemapper() bool {
-	return StorageDriverIs("devicemapper")
+	return strings.HasPrefix(testEnv.DaemonInfo.Driver, "devicemapper")
 }
 
 func IPv6() bool {
@@ -171,21 +178,21 @@ func UserNamespaceInKernel() bool {
 }
 
 func IsPausable() bool {
-	if daemonPlatform == "windows" {
-		return isolation == "hyperv"
+	if testEnv.OSType == "windows" {
+		return testEnv.DaemonInfo.Isolation == "hyperv"
 	}
 	return true
 }
 
 func NotPausable() bool {
-	if daemonPlatform == "windows" {
-		return isolation == "process"
+	if testEnv.OSType == "windows" {
+		return testEnv.DaemonInfo.Isolation == "process"
 	}
 	return false
 }
 
 func IsolationIs(expectedIsolation string) bool {
-	return daemonPlatform == "windows" && string(isolation) == expectedIsolation
+	return testEnv.OSType == "windows" && string(testEnv.DaemonInfo.Isolation) == expectedIsolation
 }
 
 func IsolationIsHyperv() bool {
@@ -198,6 +205,6 @@ func IsolationIsProcess() bool {
 
 // testRequires checks if the environment satisfies the requirements
 // for the test to run or skips the tests.
-func testRequires(c *check.C, requirements ...requirement.Test) {
+func testRequires(c requirement.SkipT, requirements ...requirement.Test) {
 	requirement.Is(c, requirements...)
 }

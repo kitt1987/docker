@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/types"
 	"github.com/miekg/dns"
+	"github.com/sirupsen/logrus"
 )
 
 // Resolver represents the embedded DNS server in Docker. It operates
@@ -29,7 +29,7 @@ type Resolver interface {
 	NameServer() string
 	// SetExtServers configures the external nameservers the resolver
 	// should use to forward queries
-	SetExtServers([]string)
+	SetExtServers([]extDNSEntry)
 	// ResolverOptions returns resolv.conf options that should be set
 	ResolverOptions() []string
 }
@@ -54,6 +54,9 @@ type DNSBackend interface {
 	ExecFunc(f func()) error
 	//NdotsSet queries the backends ndots dns option settings
 	NdotsSet() bool
+	// HandleQueryResp passes the name & IP from a response to the backend. backend
+	// can use it to maintain any required state about the resolution
+	HandleQueryResp(name string, ip net.IP)
 }
 
 const (
@@ -69,7 +72,8 @@ const (
 )
 
 type extDNSEntry struct {
-	ipStr string
+	IPStr        string
+	HostLoopback bool
 }
 
 // resolver implements the Resolver interface
@@ -182,13 +186,13 @@ func (r *resolver) Stop() {
 	r.queryLock = sync.Mutex{}
 }
 
-func (r *resolver) SetExtServers(dns []string) {
-	l := len(dns)
+func (r *resolver) SetExtServers(extDNS []extDNSEntry) {
+	l := len(extDNS)
 	if l > maxExtDNS {
 		l = maxExtDNS
 	}
 	for i := 0; i < l; i++ {
-		r.extDNSList[i].ipStr = dns[i]
+		r.extDNSList[i] = extDNS[i]
 	}
 }
 
@@ -227,7 +231,7 @@ func (r *resolver) handleIPQuery(name string, query *dns.Msg, ipType int) (*dns.
 
 	if addr == nil && ipv6Miss {
 		// Send a reply without any Answer sections
-		logrus.Debugf("Lookup name %s present without IPv6 address", name)
+		logrus.Debugf("[resolver] lookup name %s present without IPv6 address", name)
 		resp := createRespMsg(query)
 		return resp, nil
 	}
@@ -235,7 +239,7 @@ func (r *resolver) handleIPQuery(name string, query *dns.Msg, ipType int) (*dns.
 		return nil, nil
 	}
 
-	logrus.Debugf("Lookup for %s: IP %v", name, addr)
+	logrus.Debugf("[resolver] lookup for %s: IP %v", name, addr)
 
 	resp := createRespMsg(query)
 	if len(addr) > 1 {
@@ -276,7 +280,7 @@ func (r *resolver) handlePTRQuery(ptr string, query *dns.Msg) (*dns.Msg, error) 
 		return nil, nil
 	}
 
-	logrus.Debugf("Lookup for IP %s: name %s", parts[0], host)
+	logrus.Debugf("[resolver] lookup for IP %s: name %s", parts[0], host)
 	fqdn := dns.Fqdn(host)
 
 	resp := new(dns.Msg)
@@ -409,25 +413,31 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 	} else {
 		for i := 0; i < maxExtDNS; i++ {
 			extDNS := &r.extDNSList[i]
-			if extDNS.ipStr == "" {
+			if extDNS.IPStr == "" {
 				break
 			}
 			extConnect := func() {
-				addr := fmt.Sprintf("%s:%d", extDNS.ipStr, 53)
+				addr := fmt.Sprintf("%s:%d", extDNS.IPStr, 53)
 				extConn, err = net.DialTimeout(proto, addr, extIOTimeout)
 			}
 
-			execErr := r.backend.ExecFunc(extConnect)
-			if execErr != nil {
-				logrus.Warn(execErr)
-				continue
+			if extDNS.HostLoopback {
+				extConnect()
+			} else {
+				execErr := r.backend.ExecFunc(extConnect)
+				if execErr != nil {
+					logrus.Warn(execErr)
+					continue
+				}
 			}
 			if err != nil {
-				logrus.Warnf("Connect failed: %s", err)
+				logrus.Warnf("[resolver] connect failed: %s", err)
 				continue
 			}
-			logrus.Debugf("Query %s[%d] from %s, forwarding to %s:%s", name, query.Question[0].Qtype,
-				extConn.LocalAddr().String(), proto, extDNS.ipStr)
+
+			queryType := dns.TypeToString[query.Question[0].Qtype]
+			logrus.Debugf("[resolver] query %s (%s) from %s, forwarding to %s:%s", name, queryType,
+				extConn.LocalAddr().String(), proto, extDNS.IPStr)
 
 			// Timeout has to be set for every IO operation.
 			extConn.SetDeadline(time.Now().Add(extIOTimeout))
@@ -438,11 +448,11 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 			defer co.Close()
 
 			// limits the number of outstanding concurrent queries.
-			if r.forwardQueryStart() == false {
+			if !r.forwardQueryStart() {
 				old := r.tStamp
 				r.tStamp = time.Now()
 				if r.tStamp.Sub(old) > logInterval {
-					logrus.Errorf("More than %v concurrent queries from %s", maxConcurrent, extConn.LocalAddr().String())
+					logrus.Errorf("[resolver] more than %v concurrent queries from %s", maxConcurrent, extConn.LocalAddr().String())
 				}
 				continue
 			}
@@ -450,7 +460,7 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 			err = co.WriteMsg(query)
 			if err != nil {
 				r.forwardQueryEnd()
-				logrus.Debugf("Send to DNS server failed, %s", err)
+				logrus.Debugf("[resolver] send to DNS server failed, %s", err)
 				continue
 			}
 
@@ -459,12 +469,33 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 			// client can retry over TCP
 			if err != nil && err != dns.ErrTruncated {
 				r.forwardQueryEnd()
-				logrus.Debugf("Read from DNS server failed, %s", err)
+				logrus.Debugf("[resolver] read from DNS server failed, %s", err)
 				continue
 			}
-
 			r.forwardQueryEnd()
-
+			if resp != nil {
+				answers := 0
+				for _, rr := range resp.Answer {
+					h := rr.Header()
+					switch h.Rrtype {
+					case dns.TypeA:
+						answers++
+						ip := rr.(*dns.A).A
+						logrus.Debugf("[resolver] received A record %q for %q from %s:%s", ip, h.Name, proto, extDNS.IPStr)
+						r.backend.HandleQueryResp(h.Name, ip)
+					case dns.TypeAAAA:
+						answers++
+						ip := rr.(*dns.AAAA).AAAA
+						logrus.Debugf("[resolver] received AAAA record %q for %q from %s:%s", ip, h.Name, proto, extDNS.IPStr)
+						r.backend.HandleQueryResp(h.Name, ip)
+					}
+				}
+				if resp.Answer == nil || answers == 0 {
+					logrus.Debugf("[resolver] external DNS %s:%s did not return any %s records for %q", proto, extDNS.IPStr, queryType, name)
+				}
+			} else {
+				logrus.Debugf("[resolver] external DNS %s:%s returned empty response for %q", proto, extDNS.IPStr, name)
+			}
 			resp.Compress = true
 			break
 		}
@@ -474,7 +505,7 @@ func (r *resolver) ServeDNS(w dns.ResponseWriter, query *dns.Msg) {
 	}
 
 	if err = w.WriteMsg(resp); err != nil {
-		logrus.Errorf("error writing resolver resp, %s", err)
+		logrus.Errorf("[resolver] error writing resolver resp, %s", err)
 	}
 }
 
@@ -495,7 +526,7 @@ func (r *resolver) forwardQueryEnd() {
 	defer r.queryLock.Unlock()
 
 	if r.count == 0 {
-		logrus.Error("Invalid concurrent query count")
+		logrus.Error("[resolver] invalid concurrent query count")
 	} else {
 		r.count--
 	}

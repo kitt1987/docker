@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -71,8 +72,26 @@ func (n *networkNamespace) DeleteNeighbor(dstIP net.IP, dstMac net.HardwareAddr,
 			nlnh.LinkIndex = iface.Attrs().Index
 		}
 
+		// If the kernel deletion fails for the neighbor entry still remote it
+		// from the namespace cache. Otherwise if the neighbor moves back to the
+		// same host again, kernel update can fail.
 		if err := nlh.NeighDel(nlnh); err != nil {
-			return fmt.Errorf("could not delete neighbor entry: %v", err)
+			logrus.Warnf("Deleting neighbor IP %s, mac %s failed, %v", dstIP, dstMac, err)
+		}
+
+		// Delete the dynamic entry in the bridge
+		if nlnh.Family > 0 {
+			nlnh := &netlink.Neigh{
+				IP:     dstIP,
+				Family: nh.family,
+			}
+
+			nlnh.HardwareAddr = dstMac
+			nlnh.Flags = netlink.NTF_MASTER
+			if nh.linkDst != "" {
+				nlnh.LinkIndex = iface.Attrs().Index
+			}
+			nlh.NeighDel(nlnh)
 		}
 	}
 
@@ -84,20 +103,26 @@ func (n *networkNamespace) DeleteNeighbor(dstIP net.IP, dstMac net.HardwareAddr,
 		}
 	}
 	n.Unlock()
+	logrus.Debugf("Neighbor entry deleted for IP %v, mac %v", dstIP, dstMac)
 
 	return nil
 }
 
-func (n *networkNamespace) AddNeighbor(dstIP net.IP, dstMac net.HardwareAddr, options ...NeighOption) error {
+func (n *networkNamespace) AddNeighbor(dstIP net.IP, dstMac net.HardwareAddr, force bool, options ...NeighOption) error {
 	var (
 		iface netlink.Link
 		err   error
 	)
 
+	// If the namespace already has the neighbor entry but the AddNeighbor is called
+	// because of a miss notification (force flag) program the kernel anyway.
 	nh := n.findNeighbor(dstIP, dstMac)
 	if nh != nil {
-		// If it exists silently return
-		return nil
+		if !force {
+			logrus.Warnf("Neighbor entry already present for IP %v, mac %v", dstIP, dstMac)
+			return nil
+		}
+		logrus.Warnf("Force kernel update, Neighbor entry already present for IP %v, mac %v", dstIP, dstMac)
 	}
 
 	nh = &neigh{
@@ -145,7 +170,10 @@ func (n *networkNamespace) AddNeighbor(dstIP net.IP, dstMac net.HardwareAddr, op
 		return fmt.Errorf("could not add neighbor entry: %v", err)
 	}
 
+	n.Lock()
 	n.neighbors = append(n.neighbors, nh)
+	n.Unlock()
+	logrus.Debugf("Neighbor entry added for IP %v, mac %v", dstIP, dstMac)
 
 	return nil
 }

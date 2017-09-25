@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/libnetwork/ns"
 	"github.com/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -26,7 +26,6 @@ type nwIface struct {
 	mac         net.HardwareAddr
 	address     *net.IPNet
 	addressIPv6 *net.IPNet
-	ipAliases   []*net.IPNet
 	llAddrs     []*net.IPNet
 	routes      []*net.IPNet
 	bridge      bool
@@ -95,13 +94,6 @@ func (i *nwIface) LinkLocalAddresses() []*net.IPNet {
 	defer i.Unlock()
 
 	return i.llAddrs
-}
-
-func (i *nwIface) IPAliases() []*net.IPNet {
-	i.Lock()
-	defer i.Unlock()
-
-	return i.ipAliases
 }
 
 func (i *nwIface) Routes() []*net.IPNet {
@@ -179,6 +171,8 @@ func (i *nwIface) Remove() error {
 	}
 	n.Unlock()
 
+	n.checkLoV6()
+
 	return nil
 }
 
@@ -239,8 +233,8 @@ func (n *networkNamespace) AddInterface(srcName, dstPrefix string, options ...If
 	if n.isDefault {
 		i.dstName = i.srcName
 	} else {
-		i.dstName = fmt.Sprintf("%s%d", i.dstName, n.nextIfIndex)
-		n.nextIfIndex++
+		i.dstName = fmt.Sprintf("%s%d", dstPrefix, n.nextIfIndex[dstPrefix])
+		n.nextIfIndex[dstPrefix]++
 	}
 
 	path := n.path
@@ -318,6 +312,8 @@ func (n *networkNamespace) AddInterface(srcName, dstPrefix string, options ...If
 	n.iFaces = append(n.iFaces, i)
 	n.Unlock()
 
+	n.checkLoV6()
+
 	return nil
 }
 
@@ -333,7 +329,6 @@ func configureInterface(nlh *netlink.Handle, iface netlink.Link, i *nwIface) err
 		{setInterfaceIPv6, fmt.Sprintf("error setting interface %q IPv6 to %v", ifaceName, i.AddressIPv6())},
 		{setInterfaceMaster, fmt.Sprintf("error setting interface %q master to %q", ifaceName, i.DstMaster())},
 		{setInterfaceLinkLocalIPs, fmt.Sprintf("error setting interface %q link local IPs to %v", ifaceName, i.LinkLocalAddresses())},
-		{setInterfaceIPAliases, fmt.Sprintf("error setting interface %q IP Aliases to %v", ifaceName, i.IPAliases())},
 	}
 
 	for _, config := range ifaceConfigurators {
@@ -378,6 +373,9 @@ func setInterfaceIPv6(nlh *netlink.Handle, iface netlink.Link, i *nwIface) error
 	if err := checkRouteConflict(nlh, i.AddressIPv6(), netlink.FAMILY_V6); err != nil {
 		return err
 	}
+	if err := setIPv6(i.ns.path, i.DstName(), true); err != nil {
+		return fmt.Errorf("failed to enable ipv6: %v", err)
+	}
 	ipAddr := &netlink.Addr{IPNet: i.AddressIPv6(), Label: "", Flags: syscall.IFA_F_NODAD}
 	return nlh.AddrAdd(iface, ipAddr)
 }
@@ -385,16 +383,6 @@ func setInterfaceIPv6(nlh *netlink.Handle, iface netlink.Link, i *nwIface) error
 func setInterfaceLinkLocalIPs(nlh *netlink.Handle, iface netlink.Link, i *nwIface) error {
 	for _, llIP := range i.LinkLocalAddresses() {
 		ipAddr := &netlink.Addr{IPNet: llIP}
-		if err := nlh.AddrAdd(iface, ipAddr); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func setInterfaceIPAliases(nlh *netlink.Handle, iface netlink.Link, i *nwIface) error {
-	for _, si := range i.IPAliases() {
-		ipAddr := &netlink.Addr{IPNet: si}
 		if err := nlh.AddrAdd(iface, ipAddr); err != nil {
 			return err
 		}
