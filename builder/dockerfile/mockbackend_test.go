@@ -1,14 +1,16 @@
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
 	"encoding/json"
 	"io"
+	"runtime"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/builder"
 	containerpkg "github.com/docker/docker/container"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/containerfs"
 	"golang.org/x/net/context"
@@ -17,9 +19,9 @@ import (
 // MockBackend implements the builder.Backend interface for unit testing
 type MockBackend struct {
 	containerCreateFunc func(config types.ContainerCreateConfig) (container.ContainerCreateCreatedBody, error)
-	commitFunc          func(string, *backend.ContainerCommitConfig) (string, error)
+	commitFunc          func(backend.CommitConfig) (image.ID, error)
 	getImageFunc        func(string) (builder.Image, builder.ReleaseableLayer, error)
-	makeImageCacheFunc  func(cacheFrom []string, platform string) builder.ImageCache
+	makeImageCacheFunc  func(cacheFrom []string) builder.ImageCache
 }
 
 func (m *MockBackend) ContainerAttachRaw(cID string, stdin io.ReadCloser, stdout, stderr io.Writer, stream bool, attached chan struct{}) error {
@@ -37,9 +39,9 @@ func (m *MockBackend) ContainerRm(name string, config *types.ContainerRmConfig) 
 	return nil
 }
 
-func (m *MockBackend) Commit(cID string, cfg *backend.ContainerCommitConfig) (string, error) {
+func (m *MockBackend) CommitBuildStep(c backend.CommitConfig) (image.ID, error) {
 	if m.commitFunc != nil {
-		return m.commitFunc(cID, cfg)
+		return m.commitFunc(c)
 	}
 	return "", nil
 }
@@ -72,14 +74,14 @@ func (m *MockBackend) GetImageAndReleasableLayer(ctx context.Context, refOrID st
 	return &mockImage{id: "theid"}, &mockLayer{}, nil
 }
 
-func (m *MockBackend) MakeImageCache(cacheFrom []string, platform string) builder.ImageCache {
+func (m *MockBackend) MakeImageCache(cacheFrom []string) builder.ImageCache {
 	if m.makeImageCacheFunc != nil {
-		return m.makeImageCacheFunc(cacheFrom, platform)
+		return m.makeImageCacheFunc(cacheFrom)
 	}
 	return nil
 }
 
-func (m *MockBackend) CreateImage(config []byte, parent string, platform string) (builder.Image, error) {
+func (m *MockBackend) CreateImage(config []byte, parent string) (builder.Image, error) {
 	return nil, nil
 }
 
@@ -94,6 +96,10 @@ func (i *mockImage) ImageID() string {
 
 func (i *mockImage) RunConfig() *container.Config {
 	return i.config
+}
+
+func (i *mockImage) OperatingSystem() string {
+	return runtime.GOOS
 }
 
 func (i *mockImage) MarshalJSON() ([]byte, error) {
@@ -122,7 +128,7 @@ func (l *mockLayer) Mount() (containerfs.ContainerFS, error) {
 	return containerfs.NewLocalContainerFS("mountPath"), nil
 }
 
-func (l *mockLayer) Commit(string) (builder.ReleaseableLayer, error) {
+func (l *mockLayer) Commit() (builder.ReleaseableLayer, error) {
 	return nil, nil
 }
 

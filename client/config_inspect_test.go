@@ -1,4 +1,4 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
 	"bytes"
@@ -10,9 +10,33 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context"
 )
+
+func TestConfigInspectNotFound(t *testing.T) {
+	client := &Client{
+		client: newMockClient(errorMock(http.StatusNotFound, "Server error")),
+	}
+
+	_, _, err := client.ConfigInspectWithRaw(context.Background(), "unknown")
+	if err == nil || !IsErrNotFound(err) {
+		t.Fatalf("expected a NotFoundError error, got %v", err)
+	}
+}
+
+func TestConfigInspectWithEmptyID(t *testing.T) {
+	client := &Client{
+		client: newMockClient(func(req *http.Request) (*http.Response, error) {
+			return nil, errors.New("should not make request")
+		}),
+	}
+	_, _, err := client.ConfigInspectWithRaw(context.Background(), "")
+	if !IsErrNotFound(err) {
+		t.Fatalf("Expected NotFoundError, got %v", err)
+	}
+}
 
 func TestConfigInspectUnsupported(t *testing.T) {
 	client := &Client{
@@ -42,7 +66,7 @@ func TestConfigInspectConfigNotFound(t *testing.T) {
 	}
 
 	_, _, err := client.ConfigInspectWithRaw(context.Background(), "unknown")
-	if err == nil || !IsErrConfigNotFound(err) {
+	if err == nil || !IsErrNotFound(err) {
 		t.Fatalf("expected a configNotFoundError error, got %v", err)
 	}
 }
@@ -53,7 +77,7 @@ func TestConfigInspect(t *testing.T) {
 		version: "1.30",
 		client: newMockClient(func(req *http.Request) (*http.Response, error) {
 			if !strings.HasPrefix(req.URL.Path, expectedURL) {
-				return nil, fmt.Errorf("Expected URL '%s', got '%s'", expectedURL, req.URL)
+				return nil, fmt.Errorf("expected URL '%s', got '%s'", expectedURL, req.URL)
 			}
 			content, err := json.Marshal(swarm.Config{
 				ID: "config_id",

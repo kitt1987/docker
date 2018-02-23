@@ -1,10 +1,13 @@
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
+	"runtime"
+
 	"github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/remotecontext"
 	dockerimage "github.com/docker/docker/image"
+	"github.com/docker/docker/pkg/system"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -18,11 +21,8 @@ type imageSources struct {
 	byImageID map[string]*imageMount
 	mounts    []*imageMount
 	getImage  getAndMountFunc
-	cache     pathCache // TODO: remove
 }
 
-// TODO @jhowardmsft LCOW Support: Eventually, platform can be moved to options.Options.Platform,
-// and removed from builderOptions, but that can't be done yet as it would affect the API.
 func newImageSources(ctx context.Context, options builderOptions) *imageSources {
 	getAndMount := func(idOrRef string, localOnly bool) (builder.Image, builder.ReleaseableLayer, error) {
 		pullOption := backend.PullOptionNoPull
@@ -33,11 +33,12 @@ func newImageSources(ctx context.Context, options builderOptions) *imageSources 
 				pullOption = backend.PullOptionPreferLocal
 			}
 		}
+		optionsPlatform := system.ParsePlatform(options.Options.Platform)
 		return options.Backend.GetImageAndReleasableLayer(ctx, idOrRef, backend.GetImageAndLayerOptions{
 			PullOption: pullOption,
 			AuthConfig: options.Options.AuthConfigs,
 			Output:     options.ProgressWriter.Output,
-			Platform:   options.Platform,
+			OS:         optionsPlatform.OS,
 		})
 	}
 
@@ -74,7 +75,13 @@ func (m *imageSources) Unmount() (retErr error) {
 func (m *imageSources) Add(im *imageMount) {
 	switch im.image {
 	case nil:
-		im.image = &dockerimage.Image{}
+		// set the OS for scratch images
+		os := runtime.GOOS
+		// Windows does not support scratch except for LCOW
+		if runtime.GOOS == "windows" {
+			os = "linux"
+		}
+		im.image = &dockerimage.Image{V1Image: dockerimage.V1Image{OS: os}}
 	default:
 		m.byImageID[im.image.ImageID()] = im
 	}

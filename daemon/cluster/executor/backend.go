@@ -1,4 +1,4 @@
-package executor
+package executor // import "github.com/docker/docker/daemon/cluster/executor"
 
 import (
 	"io"
@@ -27,7 +27,7 @@ import (
 // Backend defines the executor component for a swarm agent.
 type Backend interface {
 	CreateManagedNetwork(clustertypes.NetworkCreateRequest) error
-	DeleteManagedNetwork(name string) error
+	DeleteManagedNetwork(networkID string) error
 	FindNetwork(idName string) (libnetwork.Network, error)
 	SetupIngress(clustertypes.NetworkCreateRequest, string) (<-chan struct{}, error)
 	ReleaseIngress() (<-chan struct{}, error)
@@ -62,5 +62,5 @@ type Backend interface {
 	LookupImage(name string) (*types.ImageInspect, error)
 	PluginManager() *plugin.Manager
 	PluginGetter() *plugin.Store
-	GetLBAttachmentStore() *networkSettings.LBAttachmentStore
+	GetAttachmentStore() *networkSettings.AttachmentStore
 }

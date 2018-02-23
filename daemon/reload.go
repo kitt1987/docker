@@ -1,4 +1,4 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/discovery"
-	"github.com/docker/docker/libcontainerd"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,11 +27,14 @@ func (daemon *Daemon) Reload(conf *config.Config) (err error) {
 	attributes := map[string]string{}
 
 	defer func() {
+		jsonString, _ := json.Marshal(daemon.configStore)
+
 		// we're unlocking here, because
 		// LogDaemonEventWithAttributes() -> SystemInfo() -> GetAllRuntimes()
 		// holds that lock too.
 		daemon.configStore.Unlock()
 		if err == nil {
+			logrus.Infof("Reloaded configuration: %s", jsonString)
 			daemon.LogDaemonEventWithAttributes("reload", attributes)
 		}
 	}()
@@ -62,7 +64,7 @@ func (daemon *Daemon) Reload(conf *config.Config) (err error) {
 	if err := daemon.reloadLiveRestore(conf, attributes); err != nil {
 		return err
 	}
-	return nil
+	return daemon.reloadNetworkDiagnosticPort(conf, attributes)
 }
 
 // reloadDebug updates configuration with Debug option
@@ -303,12 +305,26 @@ func (daemon *Daemon) reloadLiveRestore(conf *config.Config, attributes map[stri
 	// update corresponding configuration
 	if conf.IsValueSet("live-restore") {
 		daemon.configStore.LiveRestoreEnabled = conf.LiveRestoreEnabled
-		if err := daemon.containerdRemote.UpdateOptions(libcontainerd.WithLiveRestore(conf.LiveRestoreEnabled)); err != nil {
-			return err
-		}
 	}
 
 	// prepare reload event attributes with updatable configurations
 	attributes["live-restore"] = fmt.Sprintf("%t", daemon.configStore.LiveRestoreEnabled)
+	return nil
+}
+
+// reloadNetworkDiagnosticPort updates the network controller starting the diagnostic if the config is valid
+func (daemon *Daemon) reloadNetworkDiagnosticPort(conf *config.Config, attributes map[string]string) error {
+	if conf == nil || daemon.netController == nil || !conf.IsValueSet("network-diagnostic-port") ||
+		conf.NetworkDiagnosticPort < 1 || conf.NetworkDiagnosticPort > 65535 {
+		// If there is no config make sure that the diagnostic is off
+		if daemon.netController != nil {
+			daemon.netController.StopDiagnostic()
+		}
+		return nil
+	}
+	// Enable the network diagnostic if the flag is set with a valid port withing the range
+	logrus.WithFields(logrus.Fields{"port": conf.NetworkDiagnosticPort, "ip": "127.0.0.1"}).Warn("Starting network diagnostic server")
+	daemon.netController.StartDiagnostic(conf.NetworkDiagnosticPort)
+
 	return nil
 }

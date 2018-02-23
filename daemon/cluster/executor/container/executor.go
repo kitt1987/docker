@@ -1,4 +1,4 @@
-package container
+package container // import "github.com/docker/docker/daemon/cluster/executor/container"
 
 import (
 	"fmt"
@@ -19,6 +19,7 @@ import (
 	"github.com/docker/swarmkit/agent/exec"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/api/naming"
+	"github.com/docker/swarmkit/template"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -137,18 +138,23 @@ func (e *executor) Describe(ctx context.Context) (*api.NodeDescription, error) {
 
 func (e *executor) Configure(ctx context.Context, node *api.Node) error {
 	var ingressNA *api.NetworkAttachment
-	lbAttachments := make(map[string]string)
+	attachments := make(map[string]string)
 
-	for _, na := range node.LbAttachments {
+	for _, na := range node.Attachments {
 		if na.Network.Spec.Ingress {
 			ingressNA = na
 		}
-		lbAttachments[na.Network.ID] = na.Addresses[0]
+		attachments[na.Network.ID] = na.Addresses[0]
+	}
+
+	if (ingressNA == nil) && (node.Attachment != nil) {
+		ingressNA = node.Attachment
+		attachments[ingressNA.Network.ID] = ingressNA.Addresses[0]
 	}
 
 	if ingressNA == nil {
 		e.backend.ReleaseIngress()
-		return e.backend.GetLBAttachmentStore().ResetLBAttachments(lbAttachments)
+		return e.backend.GetAttachmentStore().ResetAttachments(attachments)
 	}
 
 	options := types.NetworkCreate{
@@ -181,12 +187,12 @@ func (e *executor) Configure(ctx context.Context, node *api.Node) error {
 		return err
 	}
 
-	return e.backend.GetLBAttachmentStore().ResetLBAttachments(lbAttachments)
+	return e.backend.GetAttachmentStore().ResetAttachments(attachments)
 }
 
 // Controller returns a docker container runner.
 func (e *executor) Controller(t *api.Task) (exec.Controller, error) {
-	dependencyGetter := agent.Restrict(e.dependencies, t)
+	dependencyGetter := template.NewTemplatedDependencyGetter(agent.Restrict(e.dependencies, t), t, nil)
 
 	// Get the node description from the executor field
 	e.mutex.Lock()

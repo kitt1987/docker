@@ -1,4 +1,4 @@
-package environment
+package environment // import "github.com/docker/docker/internal/test/environment"
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/integration-cli/fixtures/load"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -31,7 +32,7 @@ type PlatformDefaults struct {
 
 // New creates a new Execution struct
 func New() (*Execution, error) {
-	client, err := client.NewEnvClient()
+	client, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create client")
 	}
@@ -127,4 +128,16 @@ func (e *Execution) Print() {
 // APIClient returns an APIClient connected to the daemon under test
 func (e *Execution) APIClient() client.APIClient {
 	return e.client
+}
+
+// EnsureFrozenImagesLinux loads frozen test images into the daemon
+// if they aren't already loaded
+func EnsureFrozenImagesLinux(testEnv *Execution) error {
+	if testEnv.OSType == "linux" {
+		err := load.FrozenImagesLinux(testEnv.APIClient(), frozenImages...)
+		if err != nil {
+			return errors.Wrap(err, "error loading frozen images")
+		}
+	}
+	return nil
 }

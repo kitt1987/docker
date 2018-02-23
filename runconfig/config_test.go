@@ -1,4 +1,4 @@
-package runconfig
+package runconfig // import "github.com/docker/docker/runconfig"
 
 import (
 	"bytes"
@@ -27,11 +27,6 @@ func TestDecodeContainerConfig(t *testing.T) {
 		fixtures []f
 		image    string
 	)
-
-	//TODO: Should run for Solaris
-	if runtime.GOOS == "solaris" {
-		t.Skip()
-	}
 
 	if runtime.GOOS != "windows" {
 		image = "ubuntu"

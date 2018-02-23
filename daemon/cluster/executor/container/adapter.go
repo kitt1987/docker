@@ -1,4 +1,4 @@
-package container
+package container // import "github.com/docker/docker/daemon/cluster/executor/container"
 
 import (
 	"encoding/base64"
@@ -20,7 +20,6 @@ import (
 	containerpkg "github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/cluster/convert"
 	executorpkg "github.com/docker/docker/daemon/cluster/executor"
-	"github.com/docker/docker/pkg/system"
 	"github.com/docker/libnetwork"
 	"github.com/docker/swarmkit/agent/exec"
 	"github.com/docker/swarmkit/api"
@@ -93,9 +92,6 @@ func (c *containerAdapter) pullImage(ctx context.Context) error {
 		// TODO @jhowardmsft LCOW Support: This will need revisiting as
 		// the stack is built up to include LCOW support for swarm.
 		platform := runtime.GOOS
-		if system.LCOWSupported() {
-			platform = "linux"
-		}
 		err := c.backend.PullImage(ctx, c.container.image(), "", platform, metaHeaders, authConfig, pw)
 		pw.CloseWithError(err)
 	}()
@@ -147,8 +143,8 @@ func (c *containerAdapter) pullImage(ctx context.Context) error {
 }
 
 func (c *containerAdapter) createNetworks(ctx context.Context) error {
-	for _, network := range c.container.networks() {
-		ncr, err := c.container.networkCreateRequest(network)
+	for name := range c.container.networksAttachments {
+		ncr, err := c.container.networkCreateRequest(name)
 		if err != nil {
 			return err
 		}
@@ -166,15 +162,15 @@ func (c *containerAdapter) createNetworks(ctx context.Context) error {
 }
 
 func (c *containerAdapter) removeNetworks(ctx context.Context) error {
-	for _, nid := range c.container.networks() {
-		if err := c.backend.DeleteManagedNetwork(nid); err != nil {
+	for name, v := range c.container.networksAttachments {
+		if err := c.backend.DeleteManagedNetwork(v.Network.ID); err != nil {
 			switch err.(type) {
 			case *libnetwork.ActiveEndpointsError:
 				continue
 			case libnetwork.ErrNoSuchNetwork:
 				continue
 			default:
-				log.G(ctx).Errorf("network %s remove failed: %v", nid, err)
+				log.G(ctx).Errorf("network %s remove failed: %v", name, err)
 				return err
 			}
 		}
@@ -266,11 +262,7 @@ func (c *containerAdapter) create(ctx context.Context) error {
 		return err
 	}
 
-	if err := c.backend.UpdateContainerServiceConfig(cr.ID, c.container.serviceConfig()); err != nil {
-		return err
-	}
-
-	return nil
+	return c.backend.UpdateContainerServiceConfig(cr.ID, c.container.serviceConfig())
 }
 
 // checkMounts ensures that the provided mounts won't have any host-specific

@@ -384,10 +384,7 @@ func (u *Updater) updateTask(ctx context.Context, slot orchestrator.Slot, update
 				return errors.New("service was deleted")
 			}
 
-			if err := store.CreateTask(tx, updated); err != nil {
-				return err
-			}
-			return nil
+			return store.CreateTask(tx, updated)
 		})
 		if err != nil {
 			return err
@@ -524,7 +521,11 @@ func (u *Updater) removeOldTasks(ctx context.Context, batch *store.Batch, remove
 }
 
 func (u *Updater) isTaskDirty(t *api.Task) bool {
-	return orchestrator.IsTaskDirty(u.newService, t)
+	var n *api.Node
+	u.store.View(func(tx store.ReadTx) {
+		n = store.GetNode(tx, t.NodeID)
+	})
+	return orchestrator.IsTaskDirty(u.newService, t, n)
 }
 
 func (u *Updater) isSlotDirty(slot orchestrator.Slot) bool {

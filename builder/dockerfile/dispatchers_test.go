@@ -1,4 +1,4 @@
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/dockerfile/instructions"
+	"github.com/docker/docker/builder/dockerfile/shell"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/go-connections/nat"
 	"github.com/stretchr/testify/assert"
@@ -22,16 +24,16 @@ func newBuilderWithMockBackend() *Builder {
 	mockBackend := &MockBackend{}
 	ctx := context.Background()
 	b := &Builder{
-		options:       &types.ImageBuildOptions{},
+		options:       &types.ImageBuildOptions{Platform: runtime.GOOS},
 		docker:        mockBackend,
 		Stdout:        new(bytes.Buffer),
 		clientCtx:     ctx,
 		disableCommit: true,
 		imageSources: newImageSources(ctx, builderOptions{
-			Options: &types.ImageBuildOptions{},
+			Options: &types.ImageBuildOptions{Platform: runtime.GOOS},
 			Backend: mockBackend,
 		}),
-		imageProber:      newImageProber(mockBackend, nil, runtime.GOOS, false),
+		imageProber:      newImageProber(mockBackend, nil, false),
 		containerManager: newContainerManager(mockBackend),
 	}
 	return b
@@ -118,11 +120,7 @@ func TestFromScratch(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, sb.state.hasFromImage())
 	assert.Equal(t, "", sb.state.imageID)
-	// Windows does not set the default path. TODO @jhowardmsft LCOW support. This will need revisiting as we get further into the implementation
 	expected := "PATH=" + system.DefaultPathEnv(runtime.GOOS)
-	if runtime.GOOS == "windows" {
-		expected = ""
-	}
 	assert.Equal(t, []string{expected}, sb.state.runConfig.Env)
 }
 
@@ -145,7 +143,7 @@ func TestFromWithArg(t *testing.T) {
 	cmd := &instructions.Stage{
 		BaseName: "alpine:${THETAG}",
 	}
-	err := processMetaArg(metaArg, NewShellLex('\\'), args)
+	err := processMetaArg(metaArg, shell.NewLex('\\'), args)
 
 	sb := newDispatchRequest(b, '\\', nil, args, newStagesBuildResults())
 	require.NoError(t, err)
@@ -431,10 +429,10 @@ func TestRunWithBuildArgs(t *testing.T) {
 	}
 
 	mockBackend := b.docker.(*MockBackend)
-	mockBackend.makeImageCacheFunc = func(_ []string, _ string) builder.ImageCache {
+	mockBackend.makeImageCacheFunc = func(_ []string) builder.ImageCache {
 		return imageCache
 	}
-	b.imageProber = newImageProber(mockBackend, nil, runtime.GOOS, false)
+	b.imageProber = newImageProber(mockBackend, nil, false)
 	mockBackend.getImageFunc = func(_ string) (builder.Image, builder.ReleaseableLayer, error) {
 		return &mockImage{
 			id:     "abcdef",
@@ -448,7 +446,7 @@ func TestRunWithBuildArgs(t *testing.T) {
 		assert.Equal(t, strslice.StrSlice{""}, config.Config.Entrypoint)
 		return container.ContainerCreateCreatedBody{ID: "12345"}, nil
 	}
-	mockBackend.commitFunc = func(cID string, cfg *backend.ContainerCommitConfig) (string, error) {
+	mockBackend.commitFunc = func(cfg backend.CommitConfig) (image.ID, error) {
 		// Check the runConfig.Cmd sent to commit()
 		assert.Equal(t, origCmd, cfg.Config.Cmd)
 		assert.Equal(t, cachedCmd, cfg.ContainerConfig.Cmd)

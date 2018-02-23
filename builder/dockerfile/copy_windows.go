@@ -1,4 +1,4 @@
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
 	"errors"
@@ -7,6 +7,11 @@ import (
 
 	"github.com/docker/docker/pkg/idtools"
 )
+
+var pathBlacklist = map[string]bool{
+	"c:\\":        true,
+	"c:\\windows": true,
+}
 
 func fixPermissions(source, destination string, rootIDs idtools.IDPair, overrideSkip bool) error {
 	// chown is not supported on Windows
